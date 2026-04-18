@@ -1,7 +1,4 @@
 # stealthsense-postgresql-ml-security
-
-### Explanation
-
 1. **User Query**
    A SQL query is sent to the PostgreSQL database.
 
