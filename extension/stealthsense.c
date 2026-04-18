@@ -6,20 +6,22 @@
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "tcop/utility.h"
 
+static ProcessUtility_hook_type prev_ProcessUtility = NULL;
 PG_MODULE_MAGIC;
 
 /* Hook */
 static ExecutorStart_hook_type prev_ExecutorStart = NULL;
 
-/* -------- GLOBAL -------- */
+/* -------- GLOBAL TRACKING -------- */
+static int prev_val = -1;
+static int sequence_count = 0;
+
 static char last_query[2048] = "";
 static int repeat_count = 0;
 
-static int prev_id = -1;
-static int sequence_count = 0;
-
-/* -------- EXTRACT VALUE -------- */
+/* -------- EXTRACT NUMBER -------- */
 static int extract_value(const char *query)
 {
     for (int i = 0; query[i]; i++)
@@ -28,7 +30,7 @@ static int extract_value(const char *query)
     return -1;
 }
 
-/* -------- ML CALL -------- */
+/* -------- ML -------- */
 static int call_ml_model(const char *query)
 {
     char command[4096];
@@ -47,65 +49,139 @@ static int call_ml_model(const char *query)
     return atoi(result);
 }
 
-/* -------- SAME QUERY DETECTION -------- */
-static int detect_repeat_query(const char *query)
+/* -------- MAIN ANALYSIS -------- */
+static void analyze_query(const char *query)
 {
-    if (strcmp(last_query, query) == 0)
+    char q[2048];
+
+    /* normalize */
+    for (int i = 0; query[i] && i < sizeof(q)-1; i++)
+        q[i] = tolower(query[i]);
+    q[strlen(query)] = '\0';
+
+    /* ================= REPEAT ================= */
+    if (strcmp(last_query, q) == 0)
         repeat_count++;
     else
     {
         repeat_count = 1;
-        strncpy(last_query, query, sizeof(last_query)-1);
+        strncpy(last_query, q, sizeof(last_query)-1);
     }
 
-    return (repeat_count >= 5);
-}
-
-/* -------- SEQUENCE DETECTION -------- */
-static int detect_sequence(const char *query)
-{
-    int current_id = extract_value(query);
-
-    if (current_id == -1)
-        return 0;
-
-    if (prev_id != -1 && current_id == prev_id + 1)
-        sequence_count++;
-    else
-        sequence_count = 1;
-
-    prev_id = current_id;
-
-    return (sequence_count >= 5);
-}
-
-/* -------- MAIN ANALYSIS -------- */
-static void analyze_query(const char *query)
-{
-    /* 🔴 SAME QUERY */
-    if (detect_repeat_query(query))
+    if (repeat_count >= 5)
     {
         ereport(ERROR,
             (errmsg("STEALTHSENSE BLOCKED: Repeated Query Attack")));
     }
 
-    /* 🔴 SEQUENCE */
-    if (detect_sequence(query))
+    /* ================= SEQUENCE ================= */
+    int val = extract_value(q);
+
+    if (val != -1)
     {
-        ereport(ERROR,
-            (errmsg("STEALTHSENSE BLOCKED: Sequential Extraction Detected")));
+        if (prev_val != -1 && val == prev_val + 1)
+            sequence_count++;
+        else
+            sequence_count = 1;
+
+        prev_val = val;
+
+        if (sequence_count >= 5)
+        {
+            ereport(ERROR,
+                (errmsg("STEALTHSENSE BLOCKED: Sequential Data Extraction")));
+        }
     }
 
-    /* 🔴 ML */
-    int anomaly = call_ml_model(query);
-
-    if (anomaly == 1)
+    /* ================= SQL INJECTION ================= */
+    if (strstr(q, "or 1=1") || strstr(q, "--") || strstr(q, "union"))
     {
         ereport(ERROR,
-            (errmsg("STEALTHSENSE BLOCKED: ML Anomaly Detected")));
+            (errmsg("STEALTHSENSE BLOCKED: SQL Injection")));
+    }
+
+    /* ================= DATA DUMP ================= */
+    if (strstr(q, "select * from users") && !strstr(q, "where"))
+    {
+        ereport(ERROR,
+            (errmsg("STEALTHSENSE BLOCKED: Full Table Data Dump")));
+    }
+
+    /* ================= SENSITIVE DATA ================= */
+    if (strstr(q, "password"))
+    {
+        ereport(ERROR,
+            (errmsg("STEALTHSENSE BLOCKED: Sensitive Data Access")));
+    }
+
+    /* ================= DROP BLOCK ================= */
+    if (strstr(q, "drop table") || strstr(q, "drop database"))
+    {
+        ereport(ERROR,
+            (errmsg("STEALTHSENSE BLOCKED: Dangerous DROP Operation")));
+    }
+
+    /* ================= DELETE BLOCK ================= */
+    if (strstr(q, "delete") && !strstr(q, "where"))
+    {
+        ereport(ERROR,
+            (errmsg("STEALTHSENSE BLOCKED: Mass DELETE Attempt")));
+    }
+
+    /* Extra protection */
+    if (strstr(q, "delete") && strstr(q, "1=1"))
+    {
+        ereport(ERROR,
+            (errmsg("STEALTHSENSE BLOCKED: DELETE Injection Attack")));
+    }
+
+    /* ================= ML ================= */
+    if (call_ml_model(q) == 1)
+    {
+        ereport(ERROR,
+            (errmsg("STEALTHSENSE BLOCKED: ML Anomaly")));
     }
 }
+static void stealth_ProcessUtility(PlannedStmt *pstmt,
+                                  const char *queryString,
+                                  bool readOnlyTree,
+                                  ProcessUtilityContext context,
+                                  ParamListInfo params,
+                                  QueryEnvironment *queryEnv,
+                                  DestReceiver *dest,
+                                  QueryCompletion *qc)
+{
+    if (queryString)
+    {
+        char q[2048];
 
+        /* normalize */
+        for (int i = 0; queryString[i] && i < sizeof(q)-1; i++)
+            q[i] = tolower(queryString[i]);
+        q[strlen(queryString)] = '\0';
+
+        /* 🔴 BLOCK DROP */
+        if (strstr(q, "drop table") || strstr(q, "drop database"))
+        {
+            ereport(ERROR,
+                (errmsg("STEALTHSENSE BLOCKED: DROP Operation Detected")));
+        }
+
+        /* 🔴 BLOCK DELETE MASS */
+        if (strstr(q, "delete") && !strstr(q, "where"))
+        {
+            ereport(ERROR,
+                (errmsg("STEALTHSENSE BLOCKED: Mass DELETE Detected")));
+        }
+    }
+
+    if (prev_ProcessUtility)
+        prev_ProcessUtility(pstmt, queryString, readOnlyTree,
+                            context, params, queryEnv, dest, qc);
+    else
+        standard_ProcessUtility(pstmt, queryString, readOnlyTree,
+                                context, params, queryEnv, dest, qc);
+}
 /* -------- HOOK -------- */
 static void stealth_ExecutorStart(QueryDesc *queryDesc, int eflags)
 {
@@ -124,11 +200,15 @@ void _PG_init(void)
     prev_ExecutorStart = ExecutorStart_hook;
     ExecutorStart_hook = stealth_ExecutorStart;
 
-    elog(LOG, "🔥 StealthSense Loaded");
+    prev_ProcessUtility = ProcessUtility_hook;
+    ProcessUtility_hook = stealth_ProcessUtility;
+
+    elog(LOG, "🔥 StealthSense FULL HOOK Loaded");
 }
 
 /* -------- FINI -------- */
 void _PG_fini(void)
 {
     ExecutorStart_hook = prev_ExecutorStart;
+    ProcessUtility_hook = prev_ProcessUtility;
 }
