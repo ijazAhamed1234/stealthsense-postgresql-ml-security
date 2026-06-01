@@ -1,3 +1,5 @@
-comment = 'StealthSense Security Extension'
+comment = 'StealthSense Query Detection'
+
 default_version = '1.0'
-relocatable = true
+
+module_pathname = '$libdir/stealthsense'

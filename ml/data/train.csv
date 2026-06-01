@@ -1,0 +1,21 @@
+query,label
+"SELECT * FROM users WHERE id=1",0
+"SELECT username FROM users",0
+"SELECT * FROM orders LIMIT 10",0
+"UPDATE employee SET age=20 WHERE id=5",0
+"INSERT INTO users VALUES(1,'john')",0
+"SELECT * FROM users WHERE username='admin' OR '1'='1'",1
+"SELECT * FROM users WHERE username='admin' --' AND password='1234'",1
+"SELECT username,password FROM users WHERE id=1 UNION SELECT credit_card,cvv FROM payments",1
+"SELECT * FROM users WHERE username='admin' AND pg_sleep(5)",1
+"SELECT * FROM users; DROP TABLE employees",1
+"SELECT datname FROM pg_database",1
+"SELECT table_name FROM information_schema.tables",1
+"GRANT ALL PRIVILEGES ON DATABASE db TO hacker",1
+"DELETE FROM employees WHERE 1=1",1
+"COPY employees TO '/tmp/a.txt'",1
+"SELECT pg_read_file('/etc/passwd')",1
+"UPDATE users SET password='hack'",1
+"SELECT email,password FROM users",1
+"' OR '1'='1' --",1
+"OR 1=1 LOCK IN SHARE MODE --",1

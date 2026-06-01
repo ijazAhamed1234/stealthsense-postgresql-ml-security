@@ -1,214 +1,350 @@
 #include "postgres.h"
+
 #include "fmgr.h"
+
 #include "executor/executor.h"
 
-#include <string.h>
-#include <ctype.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include "tcop/utility.h"
+#include "miscadmin.h"
 
-static ProcessUtility_hook_type prev_ProcessUtility = NULL;
+#include "libpq/libpq.h"
+
+#include "utils/builtins.h"
+
+#include <stdio.h>
+
+#include <stdlib.h>
+
+#include <string.h>
+
+#include <unistd.h>
+
+#include <sys/types.h>
+
+#include <sys/wait.h>
+
+#include <fcntl.h>
+
+
 PG_MODULE_MAGIC;
 
-/* Hook */
+
+/* Original Hook */
+
 static ExecutorStart_hook_type prev_ExecutorStart = NULL;
 
-/* -------- GLOBAL TRACKING -------- */
-static int prev_val = -1;
-static int sequence_count = 0;
 
-static char last_query[2048] = "";
-static int repeat_count = 0;
+/* Function */
 
-/* -------- EXTRACT NUMBER -------- */
-static int extract_value(const char *query)
-{
-    for (int i = 0; query[i]; i++)
-        if (isdigit(query[i]))
-            return atoi(&query[i]);
-    return -1;
-}
+void _PG_init(void);
 
-/* -------- ML -------- */
-static int call_ml_model(const char *query)
-{
-    char command[4096];
-    char result[16] = "0";
+void _PG_fini(void);
 
-    snprintf(command, sizeof(command),
-        "/home/hp/stealthsense/ml/venv/bin/python3 /home/hp/stealthsense/ml/detect.py \"%s\"",
-        query);
+static void stealth_executor(
 
-    FILE *fp = popen(command, "r");
-    if (!fp) return 0;
+QueryDesc *queryDesc,
 
-    fgets(result, sizeof(result), fp);
-    pclose(fp);
+int eflags
 
-    return atoi(result);
-}
+);
 
-/* -------- MAIN ANALYSIS -------- */
-static void analyze_query(const char *query)
-{
-    char q[2048];
+static int detect_query(
 
-    /* normalize */
-    for (int i = 0; query[i] && i < sizeof(q)-1; i++)
-        q[i] = tolower(query[i]);
-    q[strlen(query)] = '\0';
+const char *query,
 
-    /* ================= REPEAT ================= */
-    if (strcmp(last_query, q) == 0)
-        repeat_count++;
-    else
-    {
-        repeat_count = 1;
-        strncpy(last_query, q, sizeof(last_query)-1);
-    }
+const char *user,
 
-    if (repeat_count >= 5)
-    {
-        ereport(ERROR,
-            (errmsg("STEALTHSENSE BLOCKED: Repeated Query Attack")));
-    }
+const char *ip
 
-    /* ================= SEQUENCE ================= */
-    int val = extract_value(q);
+);
 
-    if (val != -1)
-    {
-        if (prev_val != -1 && val == prev_val + 1)
-            sequence_count++;
-        else
-            sequence_count = 1;
+static void log_event(
 
-        prev_val = val;
+const char *user,
 
-        if (sequence_count >= 5)
-        {
-            ereport(ERROR,
-                (errmsg("STEALTHSENSE BLOCKED: Sequential Data Extraction")));
-        }
-    }
+const char *ip,
 
-    /* ================= SQL INJECTION ================= */
-    if (strstr(q, "or 1=1") || strstr(q, "--") || strstr(q, "union"))
-    {
-        ereport(ERROR,
-            (errmsg("STEALTHSENSE BLOCKED: SQL Injection")));
-    }
+const char *query
 
-    /* ================= DATA DUMP ================= */
-    if (strstr(q, "select * from users") && !strstr(q, "where"))
-    {
-        ereport(ERROR,
-            (errmsg("STEALTHSENSE BLOCKED: Full Table Data Dump")));
-    }
+);
 
-    /* ================= SENSITIVE DATA ================= */
-    if (strstr(q, "password"))
-    {
-        ereport(ERROR,
-            (errmsg("STEALTHSENSE BLOCKED: Sensitive Data Access")));
-    }
 
-    /* ================= DROP BLOCK ================= */
-    if (strstr(q, "drop table") || strstr(q, "drop database"))
-    {
-        ereport(ERROR,
-            (errmsg("STEALTHSENSE BLOCKED: Dangerous DROP Operation")));
-    }
 
-    /* ================= DELETE BLOCK ================= */
-    if (strstr(q, "delete") && !strstr(q, "where"))
-    {
-        ereport(ERROR,
-            (errmsg("STEALTHSENSE BLOCKED: Mass DELETE Attempt")));
-    }
+/* Init */
 
-    /* Extra protection */
-    if (strstr(q, "delete") && strstr(q, "1=1"))
-    {
-        ereport(ERROR,
-            (errmsg("STEALTHSENSE BLOCKED: DELETE Injection Attack")));
-    }
-
-    /* ================= ML ================= */
-    if (call_ml_model(q) == 1)
-    {
-        ereport(ERROR,
-            (errmsg("STEALTHSENSE BLOCKED: ML Anomaly")));
-    }
-}
-static void stealth_ProcessUtility(PlannedStmt *pstmt,
-                                  const char *queryString,
-                                  bool readOnlyTree,
-                                  ProcessUtilityContext context,
-                                  ParamListInfo params,
-                                  QueryEnvironment *queryEnv,
-                                  DestReceiver *dest,
-                                  QueryCompletion *qc)
-{
-    if (queryString)
-    {
-        char q[2048];
-
-        /* normalize */
-        for (int i = 0; queryString[i] && i < sizeof(q)-1; i++)
-            q[i] = tolower(queryString[i]);
-        q[strlen(queryString)] = '\0';
-
-        /* 🔴 BLOCK DROP */
-        if (strstr(q, "drop table") || strstr(q, "drop database"))
-        {
-            ereport(ERROR,
-                (errmsg("STEALTHSENSE BLOCKED: DROP Operation Detected")));
-        }
-
-        /* 🔴 BLOCK DELETE MASS */
-        if (strstr(q, "delete") && !strstr(q, "where"))
-        {
-            ereport(ERROR,
-                (errmsg("STEALTHSENSE BLOCKED: Mass DELETE Detected")));
-        }
-    }
-
-    if (prev_ProcessUtility)
-        prev_ProcessUtility(pstmt, queryString, readOnlyTree,
-                            context, params, queryEnv, dest, qc);
-    else
-        standard_ProcessUtility(pstmt, queryString, readOnlyTree,
-                                context, params, queryEnv, dest, qc);
-}
-/* -------- HOOK -------- */
-static void stealth_ExecutorStart(QueryDesc *queryDesc, int eflags)
-{
-    if (queryDesc->sourceText)
-        analyze_query(queryDesc->sourceText);
-
-    if (prev_ExecutorStart)
-        prev_ExecutorStart(queryDesc, eflags);
-    else
-        standard_ExecutorStart(queryDesc, eflags);
-}
-
-/* -------- INIT -------- */
 void _PG_init(void)
 {
-    prev_ExecutorStart = ExecutorStart_hook;
-    ExecutorStart_hook = stealth_ExecutorStart;
+    prev_ExecutorStart =
+        ExecutorStart_hook;
 
-    prev_ProcessUtility = ProcessUtility_hook;
-    ProcessUtility_hook = stealth_ProcessUtility;
-
-    elog(LOG, "🔥 StealthSense FULL HOOK Loaded");
+    ExecutorStart_hook =
+        stealth_executor;
 }
 
-/* -------- FINI -------- */
+
+
+/* Cleanup */
+
 void _PG_fini(void)
 {
-    ExecutorStart_hook = prev_ExecutorStart;
-    ProcessUtility_hook = prev_ProcessUtility;
+    ExecutorStart_hook =
+        prev_ExecutorStart;
+}
+
+
+
+/* Main Hook */
+
+static void stealth_executor(
+
+QueryDesc *queryDesc,
+
+int eflags
+
+)
+{
+    const char *query;
+
+    const char *user;
+
+    const char *ip;
+
+    int suspicious;
+
+
+    if(queryDesc == NULL ||
+       queryDesc->sourceText == NULL)
+    {
+
+        if(prev_ExecutorStart)
+            prev_ExecutorStart(
+                queryDesc,
+                eflags
+            );
+
+        return;
+    }
+
+
+    query =
+        queryDesc->sourceText;
+
+
+    user =
+        GetUserNameFromId(
+
+        GetUserId(),
+
+        false
+
+        );
+
+
+    if(MyProcPort &&
+       MyProcPort->remote_host)
+    {
+
+        ip =
+        MyProcPort->remote_host;
+
+    }
+    else
+    {
+
+        ip="unknown";
+
+    }
+
+
+    suspicious =
+        detect_query(
+
+        query,
+
+        user,
+
+        ip
+
+        );
+
+
+    if(suspicious)
+    {
+        log_event(
+
+        user,
+
+        ip,
+
+        query
+
+        );
+
+        ereport(
+
+        ERROR,
+
+        (
+
+        errmsg(
+
+        "StealthSense blocked suspicious query"
+
+        )
+
+        )
+
+        );
+    }
+
+
+    if(prev_ExecutorStart)
+
+        prev_ExecutorStart(
+
+        queryDesc,
+
+        eflags
+
+        );
+
+    else
+
+        standard_ExecutorStart(
+
+        queryDesc,
+
+        eflags
+
+        );
+}
+
+
+
+/* Python ML Call */
+
+static int detect_query(
+
+const char *query,
+
+const char *user,
+
+const char *ip
+
+)
+{
+    int pipefd[2];
+    pid_t pid;
+    char result[32];
+    int status;
+    int bytes_read;
+
+    if (pipe(pipefd) == -1)
+    {
+        elog(WARNING, "ML detector pipe failed");
+        return 0;
+    }
+
+    pid = fork();
+    if (pid == -1)
+    {
+        elog(WARNING, "ML detector fork failed");
+        close(pipefd[0]);
+        close(pipefd[1]);
+        return 0;
+    }
+
+    if (pid == 0)
+    {
+        /* Child process */
+        int dev_null;
+        char *const argv[] = {
+            "/home/hp/stealthsense/ml/src/venv/bin/python3",
+            "/home/hp/stealthsense/ml/src/detect.py",
+            (char *)query,
+            (char *)user,
+            (char *)ip,
+            NULL
+        };
+
+        close(pipefd[0]); /* Close unused read end */
+        dup2(pipefd[1], STDOUT_FILENO); /* Redirect stdout to pipe */
+        close(pipefd[1]);
+
+        /* Redirect stderr to /dev/null to avoid cluttering postgres logs */
+        dev_null = open("/dev/null", O_WRONLY);
+        if (dev_null != -1)
+        {
+            dup2(dev_null, STDERR_FILENO);
+            close(dev_null);
+        }
+
+        execv(argv[0], argv);
+        /* If execv returns, an error occurred */
+        exit(1);
+    }
+    else
+    {
+        /* Parent process */
+        close(pipefd[1]); /* Close unused write end */
+
+        memset(result, 0, sizeof(result));
+        bytes_read = read(pipefd[0], result, sizeof(result) - 1);
+        close(pipefd[0]);
+
+        waitpid(pid, &status, 0);
+
+        if (bytes_read <= 0)
+            return 0;
+
+        return atoi(result);
+    }
+}
+
+
+
+/* Logging */
+
+static void log_event(
+
+const char *user,
+
+const char *ip,
+
+const char *query
+
+)
+{
+    FILE *fp;
+
+
+    fp=fopen(
+
+"/home/hp/stealthsense/logs/detections.log",
+
+"a"
+
+);
+
+
+    if(fp==NULL)
+
+        return;
+
+
+    fprintf(
+
+    fp,
+
+"USER=%s IP=%s QUERY=%s\n",
+
+    user,
+
+    ip,
+
+    query
+
+    );
+
+
+    fclose(fp);
 }

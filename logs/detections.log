@@ -1,0 +1,147 @@
+SELECT * FROM users risk=34.050000000000004
+DROP TABLE employee risk=50.4
+SELECT * FROM users; risk=30.800000000000004
+SELECT * FROM users WHERE username='admin' OR '1'='1'; risk=38.75
+SELECT * FROM users; risk=21.5
+SELECT * FROM users WHERE username='admin' OR '1'='1'; risk=48.25
+SELECT * FROM users; DROP TABLE employee; risk=52.050000000000004
+SELECT * FROM users WHERE username='admin' OR '1'='1'; risk=58.25
+USER=postgres IP=[local] QUERY=SELECT * FROM users WHERE username='admin' OR '1'='1';
+SELECT * FROM users
+WHERE username='admin'
+OR '1'='1'; risk=58.25
+USER=postgres IP=[local] QUERY=SELECT * FROM users
+WHERE username='admin'
+OR '1'='1';
+SELECT * FROM users; risk=31.5
+USER=postgres IP=[local] QUERY=SELECT * FROM users;
+SELECT username,email FROM users; risk=51.150000000000006
+USER=postgres IP=[local] QUERY=SELECT username,email FROM users;
+SELECT COUNT(*) FROM users; risk=31.2
+USER=postgres IP=[local] QUERY=SELECT COUNT(*) FROM users;
+SELECT username,password FROM users; risk=46.2
+USER=postgres IP=[local] QUERY=SELECT username,password FROM users;
+SELECT * FROM users; risk=31.5
+USER=postgres IP=[local] QUERY=SELECT * FROM users;
+INSERT INTO users
+VALUES(1,'john'); risk=26.1
+SELECT * FROM users; risk=31.5
+USER=postgres IP=[local] QUERY=SELECT * FROM users;
+SELECT * FROM users; risk=31.5
+USER=postgres IP=[local] QUERY=SELECT * FROM users;
+SELECT username,password
+FROM users; risk=46.2
+USER=postgres IP=[local] QUERY=SELECT username,password
+FROM users;
+SELECT email,password
+FROM users; risk=51.150000000000006
+USER=postgres IP=[local] QUERY=SELECT email,password
+FROM users;
+SELECT pg_read_file('/etc/passwd'); risk=59.300000000000004
+USER=postgres IP=[local] QUERY=SELECT pg_read_file('/etc/passwd');
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=21.5
+SELECT * FROM users; risk=100
