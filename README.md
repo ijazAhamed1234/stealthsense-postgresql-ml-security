@@ -86,9 +86,7 @@ Features extracted from incoming queries:
 - Number of joins
 - Query complexity
 - Suspicious keywords
-- Comment detection
 - Multiple statement detection
-- Metadata access attempts
 
 ---
 
@@ -218,19 +216,12 @@ Supported Attack Detection
 The system is designed to detect:
 
 - SQL Injection
-- Authentication Bypass
 - UNION Attacks
-- Comment-Based Injection
-- Privilege Escalation
 - Database Enumeration
 - Table Enumeration
 - Column Enumeration
 - Data Exfiltration
 - Bulk Deletes
-- Mass Updates
-- Time-Based Injection
-- File Access Attempts
-- Metadata Enumeration
 - Stacked Queries
 
 ---
@@ -265,10 +256,3 @@ Future Enhancements
 - Dashboard visualization
 - Real-time alerting
 
----
-
-Authors
-
-StealthSense Team
-
-Machine Learning Based PostgreSQL Security Framework
