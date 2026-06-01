@@ -1,6 +1,6 @@
-StealthSense PostgreSQL ML Security Extension
+# StealthSense PostgreSQL ML Security Extension
 
-Overview
+# Overview
 
 StealthSense is a PostgreSQL security extension designed to detect and block suspicious database activities using machine learning, behavioral analysis, and query inspection techniques. The system integrates directly into PostgreSQL through a C-based extension and analyzes queries before execution.
 
@@ -8,7 +8,7 @@ The primary goal is to identify abnormal database behavior, SQL injection attemp
 
 ---
 
-Problem Statement
+# Problem Statement
 
 Traditional database security mechanisms mostly depend on static rules and predefined signatures. Modern attacks frequently bypass these defenses using stealthy SQL injections, enumeration techniques, and abnormal query sequences.
 
@@ -60,7 +60,7 @@ Database Execution
 ```
 ---
 
-Architecture Components
+# Architecture Components
 
 1. Query Interception Layer
 
@@ -125,7 +125,7 @@ Checks include:
 5. Risk Scoring Layer
 
 Risk Score Components:
-
+```text
 ML Score                → 45%
 
 Keyword Risk            → 20%
@@ -135,6 +135,7 @@ Query Frequency         → 15%
 IP Trust Score          → 10%
 
 Query Complexity        → 10%
+```
 
 # Decision Thresholds:
 ```text
@@ -174,13 +175,13 @@ stealthsense/
 ├── logs/
 │
 └── README.md
-
+```
 ---
 
 Installation
 
 Install dependencies:
-
+```text
 pip install pandas numpy scikit-learn joblib
 
 Train model:
@@ -208,7 +209,7 @@ sudo systemctl restart postgresql
 Create extension:
 
 CREATE EXTENSION stealthsense;
-
+```
 ---
 
 Supported Attack Detection
@@ -223,11 +224,11 @@ The system is designed to detect:
 - Data Exfiltration
 - Bulk Deletes
 - Stacked Queries
-```
+
 ---
 
 Example Detection Flow
-
+```text
 Normal Query:
 
 SELECT * FROM users WHERE id=5;
@@ -244,7 +245,7 @@ DROP TABLE employee;
 Output:
 
 BLOCK
-
+```
 ---
 
 Future Enhancements
