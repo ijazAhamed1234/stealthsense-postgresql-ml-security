@@ -23,8 +23,8 @@ StealthSense addresses this problem by combining:
 
 ---
 
-System Workflow
-
+# System Workflow
+```text
 User Query
     ↓
 
@@ -57,7 +57,7 @@ ALLOW / LOG / BLOCK
     ↓
 
 Database Execution
-
+```
 ---
 
 Architecture Components
@@ -136,8 +136,8 @@ IP Trust Score          → 10%
 
 Query Complexity        → 10%
 
-Decision Thresholds:
-
+# Decision Thresholds:
+```text
 Risk < 40
 
 ALLOW
@@ -149,11 +149,11 @@ LOG
 >70
 
 BLOCK
-
+```
 ---
 
-Folder Structure
-
+# Folder Structure
+```text
 stealthsense/
 
 ├── extension/
@@ -223,7 +223,7 @@ The system is designed to detect:
 - Data Exfiltration
 - Bulk Deletes
 - Stacked Queries
-
+```
 ---
 
 Example Detection Flow
