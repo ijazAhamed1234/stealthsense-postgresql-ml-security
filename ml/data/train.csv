@@ -4,6 +4,31 @@ query,label
 "SELECT * FROM orders LIMIT 10",0
 "UPDATE employee SET age=20 WHERE id=5",0
 "INSERT INTO users VALUES(1,'john')",0
+"SELECT id, name FROM products WHERE category='electronics'",0
+"SELECT COUNT(*) FROM orders",0
+"SELECT first_name, last_name FROM employees WHERE department_id=3",0
+"SELECT * FROM customers WHERE city='New York'",0
+"UPDATE orders SET status='shipped' WHERE order_id=101",0
+"INSERT INTO logs(event, created_at) VALUES('login', NOW())",0
+"SELECT email FROM users WHERE user_id=42",0
+"SELECT product_name, price FROM products ORDER BY price ASC",0
+"SELECT * FROM employees WHERE salary > 50000",0
+"DELETE FROM sessions WHERE expires_at < NOW()",0
+"SELECT id, title FROM articles WHERE published=true LIMIT 20",0
+"SELECT username, created_at FROM users WHERE active=1",0
+"SELECT * FROM inventory WHERE stock < 10",0
+"SELECT name, description FROM categories",0
+"UPDATE users SET last_login=NOW() WHERE id=7",0
+"SELECT COUNT(*) FROM products WHERE in_stock=true",0
+"SELECT o.id, u.username FROM orders o JOIN users u ON o.user_id=u.id",0
+"SELECT * FROM payments WHERE amount > 100 AND status='completed'",0
+"INSERT INTO cart(user_id, product_id, qty) VALUES(5, 12, 2)",0
+"SELECT SUM(amount) FROM payments WHERE user_id=3",0
+"SELECT p.name, c.name FROM products p JOIN categories c ON p.cat_id=c.id",0
+"UPDATE products SET price=19.99 WHERE id=55",0
+"SELECT * FROM roles WHERE role_name='admin'",0
+"SELECT id, content FROM comments WHERE post_id=8 ORDER BY created_at DESC",0
+"SELECT DISTINCT city FROM customers",0
 "SELECT * FROM users WHERE username='admin' OR '1'='1'",1
 "SELECT * FROM users WHERE username='admin' --' AND password='1234'",1
 "SELECT username,password FROM users WHERE id=1 UNION SELECT credit_card,cvv FROM payments",1
@@ -19,3 +44,21 @@ query,label
 "SELECT email,password FROM users",1
 "' OR '1'='1' --",1
 "OR 1=1 LOCK IN SHARE MODE --",1
+"SELECT * FROM information_schema.columns WHERE table_name='users'",1
+"SELECT rolname, rolsuper FROM pg_roles",1
+"SELECT * FROM users WHERE id=1 UNION SELECT null,null,null--",1
+"'; DROP TABLE users; --",1
+"SELECT * FROM users WHERE 1=1 AND SLEEP(3)",1
+"SELECT * FROM users WHERE username='' OR ''=''",1
+"EXEC xp_cmdshell('whoami')",1
+"SELECT * FROM users; SELECT * FROM admin_secrets;",1
+"SELECT password FROM users WHERE username='admin' --",1
+"COPY (SELECT * FROM users) TO '/tmp/dump.csv'",1
+"SELECT * FROM pg_shadow",1
+"SELECT usename, passwd FROM pg_shadow",1
+"SELECT * FROM users WHERE id=1 AND 1=2 UNION SELECT username,password FROM admins--",1
+"UPDATE users SET role='superadmin' WHERE username='hacker'",1
+"INSERT INTO admins SELECT * FROM users WHERE '1'='1'",1
+"SELECT * FROM users WHERE username LIKE '%admin%' --",1
+"DROP TABLE payments",1
+"TRUNCATE TABLE audit_logs",1

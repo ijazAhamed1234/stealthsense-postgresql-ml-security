@@ -124,33 +124,24 @@ Checks include:
 
 5. Risk Scoring Layer
 
-Risk Score Components:
-```text
-ML Score                → 45%
+The composite risk score is calculated as a weighted sum of five security signals (each ranging from 0 to 100):
 
-Keyword Risk            → 20%
+$$Risk = 0.45 \times ML\_Score + 0.20 \times Keyword\_Score + 0.15 \times Frequency\_Score + 0.10 \times IP\_Score + 0.10 \times Complexity\_Score$$
 
-Query Frequency         → 15%
+### Composite Signals:
+1. **Machine Learning Score (45% weight)**: Probability (0-100) estimated by the Random Forest classifier based on query structure.
+2. **Keyword Risk (20% weight)**: Calculated as `min(keyword_hits * 10, 100)`, flagging known dangerous SQL words (e.g. `UNION`, `DROP`, `pg_read_file`, `--`).
+3. **Query Frequency (15% weight)**: Measured using historical query count (no timing window or user-level checks).
+   - Normal traffic (count $\le 5$): score 10
+   - Moderate count ($> 5$ requests, i.e. $\ge 6$): score 70 (triggers warning/LOG verdict)
+   - Extreme count ($> 10$ requests, i.e. $\ge 11$): score 100 (automatically overrides and forces a hard block).
+4. **IP Trust Score (10% weight)**: 0 if client IP is present in `whitelist_ips.txt` (e.g. `[local]`, `127.0.0.1`); 100 for unknown external IPs.
+5. **Query Complexity (10% weight)**: Computed as `min(stacked_queries * 20 + joins * 10, 100)`.
 
-IP Trust Score          → 10%
-
-Query Complexity        → 10%
-```
-
-# Decision Thresholds:
-```text
-Risk < 40
-
-ALLOW
-
-40–70
-
-LOG
-
->70
-
-BLOCK
-```
+### Decision Thresholds:
+- **Risk < 25**: **ALLOW** (query runs normally)
+- **25 $\le$ Risk $\le$ 40**: **LOG** (allowed to run, but warning is recorded in `detections.log`)
+- **Risk > 40**: **BLOCK** (aborted before execution, error returned to client, and logged in `detections.log`)
 ---
 
 # Folder Structure

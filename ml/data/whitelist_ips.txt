@@ -1,4 +1,12 @@
+# Trusted IP addresses - one per line
+# Lines starting with # are comments and are ignored
+# Blank lines are also ignored
+
+# Loopback and local Unix-socket connections
 127.0.0.1
+::1
+[local]
+
+# Internal network
 192.168.1.10
 10.0.0.5
-

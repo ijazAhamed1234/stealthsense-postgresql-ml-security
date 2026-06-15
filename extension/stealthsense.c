@@ -1,350 +1,330 @@
+/*
+ * stealthsense.c
+ * StealthSense - PostgreSQL Security Extension
+ */
+
 #include "postgres.h"
-
 #include "fmgr.h"
-
 #include "executor/executor.h"
-
 #include "miscadmin.h"
-
-#include "libpq/libpq.h"
-
+#include "libpq/libpq-be.h"
 #include "utils/builtins.h"
+#include "utils/guc.h"
+#include "tcop/utility.h"
 
 #include <stdio.h>
-
 #include <stdlib.h>
-
 #include <string.h>
-
 #include <unistd.h>
-
+#include <signal.h>
 #include <sys/types.h>
-
 #include <sys/wait.h>
-
+#include <sys/select.h>
 #include <fcntl.h>
-
 
 PG_MODULE_MAGIC;
 
+/* Extension enabled state (settable via GUC) */
+static bool ss_enabled = true;
 
-/* Original Hook */
+/* Max time in milliseconds to wait for the ML engine (settable via GUC) */
+static int ss_timeout_ms = 3000;
 
-static ExecutorStart_hook_type prev_ExecutorStart = NULL;
-
-
-/* Function */
+/* Bypass ML checks for superusers (settable via GUC) */
+static bool ss_bypass_superuser = false;
 
 void _PG_init(void);
-
 void _PG_fini(void);
 
-static void stealth_executor(
+/* Saved pointers to previous hooks for chaining */
+static ExecutorStart_hook_type prev_ExecutorStart = NULL;
+static ProcessUtility_hook_type prev_ProcessUtility = NULL;
 
-QueryDesc *queryDesc,
+static void stealth_executor(QueryDesc *queryDesc, int eflags);
+static void stealth_utility(PlannedStmt *pstmt,
+                            const char *queryString,
+                            bool readOnlyTree,
+                            ProcessUtilityContext context,
+                            ParamListInfo params,
+                            QueryEnvironment *queryEnv,
+                            DestReceiver *dest,
+                            QueryCompletion *qc);
 
-int eflags
+static int detect_query(const char *query, const char *user, const char *ip);
+static void log_event(const char *user, const char *ip, const char *query);
 
-);
-
-static int detect_query(
-
-const char *query,
-
-const char *user,
-
-const char *ip
-
-);
-
-static void log_event(
-
-const char *user,
-
-const char *ip,
-
-const char *query
-
-);
-
-
-
-/* Init */
-
-void _PG_init(void)
+/* Called when PostgreSQL loads the shared library */
+void
+_PG_init(void)
 {
-    prev_ExecutorStart =
-        ExecutorStart_hook;
+    DefineCustomBoolVariable(
+        "stealthsense.enabled",
+        "Enable or disable StealthSense query interception.",
+        NULL,
+        &ss_enabled,
+        true,
+        PGC_SUSET,
+        0,
+        NULL, NULL, NULL
+    );
 
-    ExecutorStart_hook =
-        stealth_executor;
+    DefineCustomIntVariable(
+        "stealthsense.timeout_ms",
+        "Milliseconds to wait for the ML detector before allowing the query.",
+        NULL,
+        &ss_timeout_ms,
+        3000,
+        50,
+        30000,
+        PGC_SUSET,
+        GUC_UNIT_MS,
+        NULL, NULL, NULL
+    );
+
+    DefineCustomBoolVariable(
+        "stealthsense.bypass_superuser",
+        "Skip ML inspection for superuser queries.",
+        NULL,
+        &ss_bypass_superuser,
+        false,
+        PGC_SUSET,
+        0,
+        NULL, NULL, NULL
+    );
+
+    /* Install executor and utility hooks */
+    prev_ExecutorStart = ExecutorStart_hook;
+    ExecutorStart_hook = stealth_executor;
+
+    prev_ProcessUtility = ProcessUtility_hook;
+    ProcessUtility_hook = stealth_utility;
 }
 
-
-
-/* Cleanup */
-
-void _PG_fini(void)
+/* Called when the library is unloaded */
+void
+_PG_fini(void)
 {
-    ExecutorStart_hook =
-        prev_ExecutorStart;
+    ExecutorStart_hook = prev_ExecutorStart;
+    ProcessUtility_hook = prev_ProcessUtility;
 }
 
-
-
-/* Main Hook */
-
-static void stealth_executor(
-
-QueryDesc *queryDesc,
-
-int eflags
-
-)
+/* Intercepts DML queries (SELECT, INSERT, UPDATE, DELETE) */
+static void
+stealth_executor(QueryDesc *queryDesc, int eflags)
 {
     const char *query;
-
     const char *user;
-
     const char *ip;
-
     int suspicious;
 
-
-    if(queryDesc == NULL ||
-       queryDesc->sourceText == NULL)
+    if (!ss_enabled || queryDesc == NULL || queryDesc->sourceText == NULL)
     {
-
-        if(prev_ExecutorStart)
-            prev_ExecutorStart(
-                queryDesc,
-                eflags
-            );
-
+        if (prev_ExecutorStart)
+            prev_ExecutorStart(queryDesc, eflags);
+        else
+            standard_ExecutorStart(queryDesc, eflags);
         return;
     }
 
+    query = queryDesc->sourceText;
+    user = GetUserNameFromId(GetUserId(), false);
 
-    query =
-        queryDesc->sourceText;
-
-
-    user =
-        GetUserNameFromId(
-
-        GetUserId(),
-
-        false
-
-        );
-
-
-    if(MyProcPort &&
-       MyProcPort->remote_host)
+    if (ss_bypass_superuser && superuser())
     {
-
-        ip =
-        MyProcPort->remote_host;
-
+        if (prev_ExecutorStart)
+            prev_ExecutorStart(queryDesc, eflags);
+        else
+            standard_ExecutorStart(queryDesc, eflags);
+        return;
     }
+
+    if (MyProcPort && MyProcPort->remote_host)
+        ip = MyProcPort->remote_host;
     else
+        ip = "unknown";
+
+    suspicious = detect_query(query, user, ip);
+
+    if (suspicious)
     {
-
-        ip="unknown";
-
+        log_event(user, ip, query);
+        ereport(ERROR,
+                (errmsg("StealthSense: blocked suspicious query from user=%s ip=%s", user, ip)));
     }
 
-
-    suspicious =
-        detect_query(
-
-        query,
-
-        user,
-
-        ip
-
-        );
-
-
-    if(suspicious)
-    {
-        log_event(
-
-        user,
-
-        ip,
-
-        query
-
-        );
-
-        ereport(
-
-        ERROR,
-
-        (
-
-        errmsg(
-
-        "StealthSense blocked suspicious query"
-
-        )
-
-        )
-
-        );
-    }
-
-
-    if(prev_ExecutorStart)
-
-        prev_ExecutorStart(
-
-        queryDesc,
-
-        eflags
-
-        );
-
+    if (prev_ExecutorStart)
+        prev_ExecutorStart(queryDesc, eflags);
     else
-
-        standard_ExecutorStart(
-
-        queryDesc,
-
-        eflags
-
-        );
+        standard_ExecutorStart(queryDesc, eflags);
 }
 
-
-
-/* Python ML Call */
-
-static int detect_query(
-
-const char *query,
-
-const char *user,
-
-const char *ip
-
-)
+/* Forks Python detector in a child process and reads verdict from pipe */
+static int
+detect_query(const char *query, const char *user, const char *ip)
 {
     int pipefd[2];
     pid_t pid;
     char result[32];
-    int status;
-    int bytes_read;
+    int nbytes;
+    fd_set rfds;
+    struct timeval tv;
+    int sel_ret;
+    int child_status;
 
     if (pipe(pipefd) == -1)
     {
-        elog(WARNING, "ML detector pipe failed");
-        return 0;
+        elog(WARNING, "StealthSense: pipe() failed");
+        return 0; /* fail-safe: allow query */
     }
 
     pid = fork();
     if (pid == -1)
     {
-        elog(WARNING, "ML detector fork failed");
+        elog(WARNING, "StealthSense: fork() failed");
         close(pipefd[0]);
         close(pipefd[1]);
-        return 0;
+        return 0; /* fail-safe: allow query */
     }
 
+    /* Child Process */
     if (pid == 0)
     {
-        /* Child process */
-        int dev_null;
+        int err_log;
         char *const argv[] = {
             "/home/hp/stealthsense/ml/src/venv/bin/python3",
             "/home/hp/stealthsense/ml/src/detect.py",
-            (char *)query,
-            (char *)user,
-            (char *)ip,
+            (char *) query,
+            (char *) user,
+            (char *) ip,
             NULL
         };
 
-        close(pipefd[0]); /* Close unused read end */
-        dup2(pipefd[1], STDOUT_FILENO); /* Redirect stdout to pipe */
+        close(pipefd[0]);
+        dup2(pipefd[1], STDOUT_FILENO);
         close(pipefd[1]);
 
-        /* Redirect stderr to /dev/null to avoid cluttering postgres logs */
-        dev_null = open("/dev/null", O_WRONLY);
-        if (dev_null != -1)
+        /* Redirect stderr to logs/error.log to capture python loader/execv errors */
+        err_log = open("/home/hp/stealthsense/logs/error.log", O_WRONLY | O_CREAT | O_APPEND, 0666);
+        if (err_log != -1)
         {
-            dup2(dev_null, STDERR_FILENO);
-            close(dev_null);
+            dup2(err_log, STDERR_FILENO);
+            close(err_log);
         }
 
         execv(argv[0], argv);
-        /* If execv returns, an error occurred */
-        exit(1);
+        _exit(1); /* execv failed */
+    }
+
+    /* Parent Process */
+    close(pipefd[1]);
+
+    FD_ZERO(&rfds);
+    FD_SET(pipefd[0], &rfds);
+    tv.tv_sec = ss_timeout_ms / 1000;
+    tv.tv_usec = (ss_timeout_ms % 1000) * 1000;
+
+    sel_ret = select(pipefd[0] + 1, &rfds, NULL, NULL, &tv);
+
+    memset(result, 0, sizeof(result));
+    nbytes = 0;
+
+    if (sel_ret > 0)
+    {
+        nbytes = (int) read(pipefd[0], result, sizeof(result) - 1);
     }
     else
     {
-        /* Parent process */
-        close(pipefd[1]); /* Close unused write end */
-
-        memset(result, 0, sizeof(result));
-        bytes_read = read(pipefd[0], result, sizeof(result) - 1);
-        close(pipefd[0]);
-
-        waitpid(pid, &status, 0);
-
-        if (bytes_read <= 0)
-            return 0;
-
-        return atoi(result);
+        /* Timeout or select error - kill the child and fail-safe */
+        elog(WARNING, "StealthSense: ML detector timed out after %d ms - allowing query", ss_timeout_ms);
+        kill(pid, SIGKILL);
     }
+
+    close(pipefd[0]);
+    waitpid(pid, &child_status, 0);
+
+    if (nbytes <= 0)
+        return 0;
+
+    return atoi(result); /* 1 = block, 0 = allow */
 }
 
-
-
-/* Logging */
-
-static void log_event(
-
-const char *user,
-
-const char *ip,
-
-const char *query
-
-)
+/* Appends a sanitized single-line query event to logs/detections.log */
+static void
+log_event(const char *user, const char *ip, const char *query)
 {
     FILE *fp;
+    const char *p;
+    char c;
 
-
-    fp=fopen(
-
-"/home/hp/stealthsense/logs/detections.log",
-
-"a"
-
-);
-
-
-    if(fp==NULL)
-
+    fp = fopen("/home/hp/stealthsense/logs/detections.log", "a");
+    if (fp == NULL)
         return;
 
+    fprintf(fp, "USER=%s IP=%s QUERY=", user, ip);
 
-    fprintf(
+    for (p = query; (c = *p) != '\0'; p++)
+    {
+        if (c == '\n' || c == '\r' || c == '\t')
+            fputc(' ', fp);
+        else
+            fputc(c, fp);
+    }
 
-    fp,
-
-"USER=%s IP=%s QUERY=%s\n",
-
-    user,
-
-    ip,
-
-    query
-
-    );
-
-
+    fputc('\n', fp);
     fclose(fp);
+}
+
+/* Intercepts DDL/Utility statements (DROP TABLE, CREATE TABLE, ALTER TABLE, etc.) */
+static void
+stealth_utility(PlannedStmt *pstmt,
+                const char *queryString,
+                bool readOnlyTree,
+                ProcessUtilityContext context,
+                ParamListInfo params,
+                QueryEnvironment *queryEnv,
+                DestReceiver *dest,
+                QueryCompletion *qc)
+{
+    const char *user;
+    const char *ip;
+    int suspicious;
+
+    if (!ss_enabled || queryString == NULL)
+    {
+        if (prev_ProcessUtility)
+            prev_ProcessUtility(pstmt, queryString, readOnlyTree, context, params, queryEnv, dest, qc);
+        else
+            standard_ProcessUtility(pstmt, queryString, readOnlyTree, context, params, queryEnv, dest, qc);
+        return;
+    }
+
+    user = GetUserNameFromId(GetUserId(), false);
+
+    if (ss_bypass_superuser && superuser())
+    {
+        if (prev_ProcessUtility)
+            prev_ProcessUtility(pstmt, queryString, readOnlyTree, context, params, queryEnv, dest, qc);
+        else
+            standard_ProcessUtility(pstmt, queryString, readOnlyTree, context, params, queryEnv, dest, qc);
+        return;
+    }
+
+    if (MyProcPort && MyProcPort->remote_host)
+        ip = MyProcPort->remote_host;
+    else
+        ip = "unknown";
+
+    suspicious = detect_query(queryString, user, ip);
+
+    if (suspicious)
+    {
+        log_event(user, ip, queryString);
+        ereport(ERROR,
+                (errmsg("StealthSense: blocked suspicious query from user=%s ip=%s", user, ip)));
+    }
+
+    if (prev_ProcessUtility)
+        prev_ProcessUtility(pstmt, queryString, readOnlyTree, context, params, queryEnv, dest, qc);
+    else
+        standard_ProcessUtility(pstmt, queryString, readOnlyTree, context, params, queryEnv, dest, qc);
 }

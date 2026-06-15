@@ -5,3 +5,11 @@ _pycache_/
 *.pyc
 
 .vscode/
+
+# C build objects
+*.so
+*.o
+*.bc
+
+# Logs
+logs/

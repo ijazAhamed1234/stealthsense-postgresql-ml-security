@@ -25,7 +25,10 @@ SUSPICIOUS_KEYWORDS = [
 
 def extract_features(query):
 
-    q=query.lower()
+    had_comments = int("--" in query or "/*" in query)
+    cleaned = re.sub(r'/\*.*?\*/', '', query, flags=re.DOTALL)
+    cleaned = re.sub(r'--.*$', '', cleaned, flags=re.MULTILINE)
+    q = cleaned.lower()
 
     return {
 
@@ -50,10 +53,7 @@ def extract_features(query):
         ),
 
         "comments":
-        int(
-            "--" in q or
-            "/*" in q
-        ),
+        had_comments,
 
         "special_chars":
         len(
