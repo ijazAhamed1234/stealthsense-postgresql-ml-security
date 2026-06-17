@@ -9,6 +9,7 @@ import time
 import os
 import json
 import fcntl
+import re
 
 # ------------------------------------------------------------------
 # Constants
@@ -47,6 +48,30 @@ def _save_history(history):
         pass
 
 
+def normalize_query(q):
+    """
+    Normalize the query by removing comments, lowercasing, abstracting
+    string and numeric literals, and collapsing whitespaces.
+    """
+    # Remove comments
+    q = re.sub(r'/\*.*?\*/', '', q, flags=re.DOTALL)
+    q = re.sub(r'--.*$', '', q, flags=re.MULTILINE)
+    
+    # Lowercase & strip
+    q = q.lower().strip()
+    
+    # Replace single-quoted string literals with '?'
+    q = re.sub(r"'(?:''|[^'])*'", "'?'", q)
+    
+    # Replace numeric literals (integers, floats, negative numbers) with ?
+    q = re.sub(r"\b-?\d+(?:\.\d+)?\b", "?", q)
+    
+    # Collapse multiple whitespaces/newlines into a single space
+    q = re.sub(r"\s+", " ", q)
+    
+    return q.strip()
+
+
 def query_frequency(query, user):
     """
     Record this (query, user) event and return a frequency risk score:
@@ -58,6 +83,7 @@ def query_frequency(query, user):
     uses an exclusive flock() around the read-modify-write cycle.
     """
     now = time.time()
+    query = normalize_query(query)
 
     # Create the lock file if it does not exist yet.
     # If a PermissionError or other error occurs, proceed without a lock to avoid crashing the detector.

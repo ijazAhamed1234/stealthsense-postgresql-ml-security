@@ -6,10 +6,4 @@ _pycache_/
 
 .vscode/
 
-# C build objects
-*.so
-*.o
-*.bc
 
-# Logs
-logs/

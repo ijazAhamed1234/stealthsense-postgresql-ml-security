@@ -1,0 +1,12 @@
+[ALLOW] risk=5.2 user=testuser ip=127.0.0.1 query=SELECT id FROM employees WHERE id=5
+[BLOCK] risk=48.2 user=testuser ip=127.0.0.1 query=SELECT pg_read_file('/etc/passwd')
+[BLOCK] risk=49.8 user=testuser ip=127.0.0.1 query=SELECT * FROM users; DROP TABLE employees
+[LOG] risk=31.3 user=testuser ip=127.0.0.1 query=
+[BLOCK] risk=47.5 user=testuser ip=127.0.0.1 query=GRANT ALL PRIVILEGES ON DATABASE db TO hacker
+[BLOCK] risk=100.0 user=testuser ip=127.0.0.1 query=SELECT id FROM employees WHERE id=5
+[BLOCK] risk=100.0 user=testuser ip=127.0.0.1 query=SELECT id FROM employees WHERE id=5
+[BLOCK] risk=100.0 user=testuser ip=127.0.0.1 query=SELECT id FROM employees WHERE id=5 -- comment three
+[BLOCK] risk=100.0 user=testuser ip=127.0.0.1 query=SELECT * FROM users WHERE id=6
+[BLOCK] risk=45.8 user=testuser ip=127.0.0.1 query=SELECT * FROM users WHERE username='admin' OR '1'='1'
+[ALLOW] risk=15.2 user=testuser ip=198.51.100.42 query=SELECT id FROM employees WHERE id=5
+[BLOCK] risk=55.8 user=unknown ip=unknown query=SELECT * FROM users;

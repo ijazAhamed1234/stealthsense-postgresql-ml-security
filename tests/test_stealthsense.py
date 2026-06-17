@@ -238,7 +238,7 @@ class TestFrequency(unittest.TestCase):
         from frequency import query_frequency, HISTORY_FILE
         now = time.time()
         fake = {
-            "queries": {"SELECT 1": [now - 1] * 5},
+            "queries": {"select ?": [now - 1] * 5},
         }
         with open(HISTORY_FILE, "w") as f:
             json.dump(fake, f)
@@ -249,7 +249,7 @@ class TestFrequency(unittest.TestCase):
         from frequency import query_frequency, HISTORY_FILE
         now = time.time()
         fake = {
-            "queries": {"SELECT 1": [now - 1] * 10},
+            "queries": {"select ?": [now - 1] * 10},
         }
         with open(HISTORY_FILE, "w") as f:
             json.dump(fake, f)
@@ -260,7 +260,7 @@ class TestFrequency(unittest.TestCase):
         from frequency import query_frequency, HISTORY_FILE, WINDOW
         now = time.time()
         fake = {
-            "queries": {"SELECT 1": [now - WINDOW - 10] * 200},
+            "queries": {"select ?": [now - WINDOW - 10] * 200},
         }
         with open(HISTORY_FILE, "w") as f:
             json.dump(fake, f)
@@ -272,8 +272,8 @@ class TestFrequency(unittest.TestCase):
         from frequency import query_frequency, HISTORY_FILE
         now = time.time()
         fake = {
-            "queries": {"SELECT evil": [now - 1] * 10,
-                        "SELECT good": []},
+            "queries": {"select evil": [now - 1] * 10,
+                        "select good": []},
         }
         with open(HISTORY_FILE, "w") as f:
             json.dump(fake, f)
@@ -345,8 +345,7 @@ class TestDetectE2E(unittest.TestCase):
         """A benign query repeated >=11× per 10s must be blocked."""
         now = time.time()
         fake = {
-            "queries": {"SELECT id FROM employees WHERE id=5": [now - 1] * 10},
-            "users":   {"testuser": [now - 1] * 10},
+            "queries": {"select id from employees where id=?": [now - 1] * 10},
         }
         with open(HIST_E2E, "w") as f:
             json.dump(fake, f)
@@ -359,8 +358,7 @@ class TestDetectE2E(unittest.TestCase):
         """A benign query run 11 times must be blocked on the 11th execution."""
         now = time.time()
         fake = {
-            "queries": {"SELECT id FROM employees WHERE id=5": [now - 1] * 10},
-            "users":   {"testuser": [now - 1] * 10},
+            "queries": {"select id from employees where id=?": [now - 1] * 10},
         }
         with open(HIST_E2E, "w") as f:
             json.dump(fake, f)
@@ -374,8 +372,7 @@ class TestDetectE2E(unittest.TestCase):
         """A benign query run with different comments must be normalized and blocked on 11th execution."""
         now = time.time()
         fake = {
-            "queries": {"SELECT id FROM employees WHERE id=5": [now - 1] * 10},
-            "users":   {"testuser": [now - 1] * 10},
+            "queries": {"select id from employees where id=?": [now - 1] * 10},
         }
         with open(HIST_E2E, "w") as f:
             json.dump(fake, f)
@@ -384,6 +381,20 @@ class TestDetectE2E(unittest.TestCase):
         out, rc = _run_detect("SELECT id FROM employees WHERE id=5 -- comment three")
         self.assertEqual(rc, 0)
         self.assertEqual(out, "1", "Expected normalized query to be blocked on 11th run")
+
+    def test_repeated_query_with_different_literals_blocked_after_11_calls(self):
+        """A benign query run with different numeric values must be normalized and blocked on 11th execution."""
+        now = time.time()
+        fake = {
+            "queries": {"select * from users where id=?": [now - 1] * 10},
+        }
+        with open(HIST_E2E, "w") as f:
+            json.dump(fake, f)
+
+        # 11th execution with a different ID value (e.g. 6)
+        out, rc = _run_detect("SELECT * FROM users WHERE id=6")
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, "1", "Expected query with different literal values to be normalized and blocked")
 
     def test_unknown_ip_raises_risk(self):
         """Query from an unknown IP should raise risk even if query is benign."""
