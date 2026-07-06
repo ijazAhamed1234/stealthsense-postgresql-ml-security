@@ -15,8 +15,8 @@ import re
 # Constants
 # ------------------------------------------------------------------
 WINDOW       = 10     # seconds – the sliding observation window
-MAX_RATE     = 11     # queries per window → score 100 (hard block)
-MED_RATE     = 6      # queries per window → score 70
+MAX_RATE     = 8      # queries per window → score 100 (hard block)
+MED_RATE     = 5      # queries per window → score 70
 
 HISTORY_FILE = os.getenv("STEALTHSENSE_HIST_FILE", "/tmp/stealthsense_frequency_history.json")
 LOCK_FILE    = os.getenv("STEALTHSENSE_LOCK_FILE", "/tmp/stealthsense_frequency_history.json.lock")
@@ -25,7 +25,7 @@ LOCK_FILE    = os.getenv("STEALTHSENSE_LOCK_FILE", "/tmp/stealthsense_frequency_
 def _load_history():
     """Load history dict from the JSON file; return empty dict on any error."""
     if not os.path.exists(HISTORY_FILE):
-        return {"queries": {}, "users": {}}
+        return {"queries": {}, "users": {}, "blocked_until": {}}
     try:
         with open(HISTORY_FILE, "r") as f:
             data = json.load(f)
@@ -33,9 +33,11 @@ def _load_history():
             data["queries"] = {}
         if "users" not in data:
             data["users"] = {}
+        if "blocked_until" not in data:
+            data["blocked_until"] = {}
         return data
     except Exception:
-        return {"queries": {}, "users": {}}
+        return {"queries": {}, "users": {}, "blocked_until": {}}
 
 
 def _save_history(history):
@@ -51,7 +53,9 @@ def _save_history(history):
 def normalize_query(q):
     """
     Normalize the query by removing comments, lowercasing, abstracting
-    string and numeric literals, and collapsing whitespaces.
+    string and numeric literals, keeping only SQL keywords, operators,
+    and punctuation, and replacing all other words (identifiers/table names)
+    with '?'.
     """
     # Remove comments
     q = re.sub(r'/\*.*?\*/', '', q, flags=re.DOTALL)
@@ -66,10 +70,40 @@ def normalize_query(q):
     # Replace numeric literals (integers, floats, negative numbers) with ?
     q = re.sub(r"\b-?\d+(?:\.\d+)?\b", "?", q)
     
-    # Collapse multiple whitespaces/newlines into a single space
-    q = re.sub(r"\s+", " ", q)
+    # Tokenize the query: words (letters/underscores/numbers), or other symbols
+    tokens = re.findall(r'[a-zA-Z_]\w*|\d+|[^\w\s]', q)
     
-    return q.strip()
+    PRESERVED_KEYWORDS = {
+        "select", "from", "where", "insert", "update", "delete", "join", "on", 
+        "and", "or", "not", "in", "is", "null", "like", "into", "values", "set", 
+        "limit", "offset", "group", "by", "order", "having", "as", "union", "all", 
+        "create", "table", "drop", "truncate", "alter", "grant", "revoke", "index", 
+        "view", "trigger", "database", "copy", "pg_sleep", "pg_read_file", 
+        "information_schema", "pg_database", "pg_roles", "benchmark", "exec", 
+        "xp_", "lock", "for", "share", "mode"
+    }
+    
+    normalized_tokens = []
+    for token in tokens:
+        # Check if it starts with a letter or underscore
+        if token[0].isalpha() or token[0] == '_':
+            if token in PRESERVED_KEYWORDS:
+                normalized_tokens.append(token)
+            else:
+                normalized_tokens.append('?')
+        elif token.isdigit() or token == '?':
+            normalized_tokens.append('?')
+        else:
+            normalized_tokens.append(token)
+            
+    normalized = " ".join(normalized_tokens)
+    # Clean up spaces around common punctuation to keep format clean
+    normalized = re.sub(r'\s+([,.;()=<>!])', r'\1', normalized)
+    normalized = re.sub(r'([,.;()=<>!])\s+', r'\1', normalized)
+    # Collapse multiple whitespaces
+    normalized = re.sub(r'\s+', ' ', normalized).strip()
+    
+    return normalized
 
 
 def query_frequency(query, user):
@@ -104,13 +138,30 @@ def query_frequency(query, user):
 
     try:
         history = _load_history()
+        blocked_until = history.setdefault("blocked_until", {})
 
-        # ── Record the query event (historical count, no timing window) ──
-        history["queries"].setdefault(query, []).append(now)
+        # ── Check lockout ──
+        if now < blocked_until.get(query, 0):
+            # Extend lockout duration
+            blocked_until[query] = now + WINDOW
+            _save_history(history)
+            query_count = MAX_RATE
+        else:
+            # ── Clean up old timestamps from the history first ──
+            for q in list(history["queries"].keys()):
+                history["queries"][q] = [x for x in history["queries"][q] if now - x < WINDOW]
+                if not history["queries"][q]:
+                    del history["queries"][q]
 
-        _save_history(history)
+            # ── Record the current query event ──
+            history["queries"].setdefault(query, []).append(now)
+            query_count = len(history["queries"].get(query, []))
 
-        query_count = len(history["queries"].get(query, []))
+            # ── Set lockout if MAX_RATE is reached ──
+            if query_count >= MAX_RATE:
+                blocked_until[query] = now + WINDOW
+
+            _save_history(history)
 
     finally:
         if lock_fd:

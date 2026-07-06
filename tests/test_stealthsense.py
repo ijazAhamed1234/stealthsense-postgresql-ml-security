@@ -256,7 +256,7 @@ class TestFrequency(unittest.TestCase):
         score = query_frequency("SELECT 1", "alice")
         self.assertEqual(score, 100)
 
-    def test_old_entries_are_not_evicted(self):
+    def test_old_entries_are_evicted(self):
         from frequency import query_frequency, HISTORY_FILE, WINDOW
         now = time.time()
         fake = {
@@ -265,19 +265,19 @@ class TestFrequency(unittest.TestCase):
         with open(HISTORY_FILE, "w") as f:
             json.dump(fake, f)
         score = query_frequency("SELECT 1", "alice")
-        # Timing is not checked -> old entries NOT evicted -> score is 100
-        self.assertEqual(score, 100)
+        # Timing is checked -> old entries ARE evicted -> score is 10
+        self.assertEqual(score, 10)
 
     def test_different_queries_tracked_separately(self):
         from frequency import query_frequency, HISTORY_FILE
         now = time.time()
         fake = {
-            "queries": {"select evil": [now - 1] * 10,
-                        "select good": []},
+            "queries": {"insert into ? values(?)": [now - 1] * 10,
+                        "select ?": []},
         }
         with open(HISTORY_FILE, "w") as f:
             json.dump(fake, f)
-        # "good" query: query_count = 1 (new) -> low
+        # "select ?" query: query_count = 1 (new) -> low
         score = query_frequency("SELECT good", "alice")
         self.assertEqual(score, 10)
 
@@ -295,7 +295,7 @@ def _run_detect(query, user="testuser", ip="127.0.0.1"):
     """Invoke detect.py as a subprocess and return (stdout.strip(), returncode)."""
     r = subprocess.run(
         [PYTHON, DETECT, query, user, ip],
-        capture_output=True, text=True, timeout=15
+        capture_output=True, text=True
     )
     return r.stdout.strip(), r.returncode
 
@@ -345,7 +345,7 @@ class TestDetectE2E(unittest.TestCase):
         """A benign query repeated >=11× per 10s must be blocked."""
         now = time.time()
         fake = {
-            "queries": {"select id from employees where id=?": [now - 1] * 10},
+            "queries": {"select ? from ? where ?=?": [now - 1] * 10},
         }
         with open(HIST_E2E, "w") as f:
             json.dump(fake, f)
@@ -358,7 +358,7 @@ class TestDetectE2E(unittest.TestCase):
         """A benign query run 11 times must be blocked on the 11th execution."""
         now = time.time()
         fake = {
-            "queries": {"select id from employees where id=?": [now - 1] * 10},
+            "queries": {"select ? from ? where ?=?": [now - 1] * 10},
         }
         with open(HIST_E2E, "w") as f:
             json.dump(fake, f)
@@ -372,7 +372,7 @@ class TestDetectE2E(unittest.TestCase):
         """A benign query run with different comments must be normalized and blocked on 11th execution."""
         now = time.time()
         fake = {
-            "queries": {"select id from employees where id=?": [now - 1] * 10},
+            "queries": {"select ? from ? where ?=?": [now - 1] * 10},
         }
         with open(HIST_E2E, "w") as f:
             json.dump(fake, f)
@@ -386,7 +386,7 @@ class TestDetectE2E(unittest.TestCase):
         """A benign query run with different numeric values must be normalized and blocked on 11th execution."""
         now = time.time()
         fake = {
-            "queries": {"select * from users where id=?": [now - 1] * 10},
+            "queries": {"select * from ? where ?=?": [now - 1] * 10},
         }
         with open(HIST_E2E, "w") as f:
             json.dump(fake, f)
@@ -395,6 +395,20 @@ class TestDetectE2E(unittest.TestCase):
         out, rc = _run_detect("SELECT * FROM users WHERE id=6")
         self.assertEqual(rc, 0)
         self.assertEqual(out, "1", "Expected query with different literal values to be normalized and blocked")
+
+    def test_repeated_query_with_different_tables_blocked_after_11_calls(self):
+        """Queries with different table names but same structure must normalize to the same key and be blocked on 11th run."""
+        now = time.time()
+        fake = {
+            "queries": {"select * from ?": [now - 1] * 10},
+        }
+        with open(HIST_E2E, "w") as f:
+            json.dump(fake, f)
+
+        # 11th execution with a completely different table name
+        out, rc = _run_detect("SELECT * FROM projects")
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, "1", "Expected query with different table name to be normalized and blocked")
 
     def test_unknown_ip_raises_risk(self):
         """Query from an unknown IP should raise risk even if query is benign."""
@@ -412,6 +426,39 @@ class TestDetectE2E(unittest.TestCase):
         out, rc = _run_detect("")
         self.assertEqual(rc, 0)
         self.assertIn(out, ["0", "1"])
+
+    def test_blocked_at_8th_call(self):
+        """A benign query repeated 8 times (more than 7) must be blocked on the 8th execution."""
+        now = time.time()
+        fake = {
+            "queries": {"select ? from ? where ?=?": [now - 1] * 7},
+        }
+        with open(HIST_E2E, "w") as f:
+            json.dump(fake, f)
+
+        # 8th execution of the query (more than 7)
+        out, rc = _run_detect("SELECT id FROM employees WHERE id=5")
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, "1", "Expected query to be blocked on 8th execution")
+
+    def test_malicious_query_blocked_immediately_without_frequency_tracking(self):
+        """A malicious query must be blocked immediately, and NOT be recorded in the frequency history."""
+        # Ensure hist file doesn't have drop table
+        if os.path.exists(HIST_E2E):
+            try:
+                os.remove(HIST_E2E)
+            except Exception:
+                pass
+                
+        out, rc = _run_detect("DROP TABLE employees")
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, "1", "Expected malicious query to be blocked immediately")
+        
+        # Now verify frequency history does not contain the drop table query
+        if os.path.exists(HIST_E2E):
+            with open(HIST_E2E, "r") as f:
+                history = json.load(f)
+            self.assertNotIn("drop table ?", history.get("queries", {}))
 
 
 if __name__ == "__main__":

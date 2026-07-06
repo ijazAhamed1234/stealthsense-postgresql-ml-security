@@ -7,7 +7,7 @@ This document explains the architecture of the **StealthSense** security extensi
 ## 1. Architectural Overview
 
 StealthSense operates as an inline query firewall for PostgreSQL. It splits responsibilities between:
-1. **The C Extension (`stealthsense.c`)**: Runs inside the PostgreSQL backend process. It hooks into the query parser/executor, intercepts incoming queries, captures context (user, IP), forks the Python detector, enforces a timeout, and blocks execution if a threat is detected.
+1. **The C Extension (`stealthsense.c`)**: Runs inside the PostgreSQL backend process. It hooks into the query parser/executor, intercepts incoming queries, captures context (user, IP), forks the Python detector, and blocks execution if a threat is detected.
 2. **The Python Detector (`detect.py`)**: Runs as a separate process spawned by the C extension. It extracts query features, checks an IP whitelist, analyzes rate patterns, queries a Random Forest ML model, and produces a composite risk score (0-100).
 
 ---
@@ -49,7 +49,7 @@ PostgreSQL allows multiple extensions to hook into the same events. To avoid bre
 ### `_PG_init`
 - **Purpose**: Called automatically when the PostgreSQL server preloads the extension (via `shared_preload_libraries`).
 - **Functionality**:
-  - Registers the custom Grand Unified Configuration (GUC) parameters (`stealthsense.enabled`, `stealthsense.timeout_ms`, `stealthsense.bypass_superuser`).
+  - Registers the custom Grand Unified Configuration (GUC) parameters (`stealthsense.enabled`, `stealthsense.bypass_superuser`).
   - Saves the previous hook addresses and registers the custom hooks.
 
 ### `_PG_fini`
@@ -67,9 +67,8 @@ PostgreSQL allows multiple extensions to hook into the same events. To avoid bre
        - Redirects `stderr` to a persistent file (`logs/error.log`) to capture startup/module issues.
        - Invokes the virtual environment's Python interpreter to run `detect.py` using `execv()`.
      - **Parent Process (PostgreSQL)**:
-       - Uses `select()` to wait on the read end of the pipe for up to `stealthsense.timeout_ms` milliseconds.
-       - **On Timeout**: If the child does not respond within the timeout, the parent sends `SIGKILL` to terminate the child, reaps it with `waitpid()`, logs a timeout warning, and returns `0` (fail-safe to allow the query).
-       - **On Successful Read**: Reaps the child process, parses its output (`0` or `1`), and returns the decision.
+       - Performs a blocking `read()` on the pipe to wait for the child's response.
+       - Reaps the child process, parses its output (`0` or `1`), and returns the decision.
 
 ### `log_event`
 - **Purpose**: Writes blocked query details to the audit log (`logs/detections.log`).

@@ -48,43 +48,74 @@ try:
     clean_query = re.sub(r'/\*.*?\*/', '', query, flags=re.DOTALL)
     clean_query = re.sub(r'--.*$', '', clean_query, flags=re.MULTILINE)
     clean_query = clean_query.strip()
+    if clean_query.endswith(';'):
+        clean_query = clean_query[:-1].strip()
 
-    # ── Frequency score check FIRST ────────────────────────────────────────
-    freq = query_frequency(clean_query, user)
+    # ── First, extract features and check ML/keyword/structural maliciousness ──
+    import pandas as pd
+    import joblib
 
-    # ── Early Exit for Extreme Frequency Block ─────────────────────────────
-    if freq >= 100:
-        risk = 100
+    # Load trained Random Forest model
+    model = joblib.load(os.path.join(BASE_DIR, "../models/model.pkl"))
+
+    # ── Feature extraction ─────────────────────────────────────────────
+    query_for_extractor = query.strip()
+    if query_for_extractor.endswith(';'):
+        query_for_extractor = query_for_extractor[:-1].strip()
+
+    features = extract_features(query_for_extractor)
+    X        = pd.DataFrame([features])
+
+    # ── ML score: probability the query is malicious (class 1), 0-100 ──
+    ml_score = model.predict_proba(X)[0][1] * 100
+
+    # ── Keyword risk score ─────────────────────────────────────────────
+    keyword_score = min(features["keyword_hits"] * 10, 100)
+
+    # ── IP trust score: 0 if whitelisted, 100 if unknown ──────────────
+    ip_score = 0 if allowed(ip) else 100
+
+    # ── Query complexity score ─────────────────────────────────────────
+    complexity = min(features["multiple_queries"] * 20 + features["joins"] * 10, 100)
+
+    # Identify if query is immediately malicious (e.g. drop table, SQLi, exfiltration)
+    q_lower = query.lower().strip()
+    if q_lower.endswith(';'):
+        q_lower = q_lower[:-1].strip()
+
+    is_session_control = False
+    if ";" not in q_lower:
+        for prefix in ["set ", "show ", "begin", "commit", "rollback", "explain ", "deallocate ", "discard "]:
+            if q_lower.startswith(prefix) or q_lower == prefix.strip():
+                is_session_control = True
+                break
+
+    is_malicious = False
+    if is_session_control:
+        ml_score = 0.0
+        keyword_score = 0.0
+        is_malicious = False
+    else:
+        if ml_score > 85:
+            is_malicious = True
+        elif "drop" in q_lower or "truncate" in q_lower or "grant" in q_lower or "revoke" in q_lower or "union" in q_lower:
+            is_malicious = True
+        elif "pg_sleep" in q_lower or "pg_read_file" in q_lower:
+            is_malicious = True
+        elif "or 1=1" in q_lower or "or '1'='1'" in q_lower or "or 1 = 1" in q_lower or "or '1' = '1'" in q_lower:
+            is_malicious = True
+
+    if is_malicious:
+        # Malicious queries block immediately without calling query_frequency (no rate tracking)
+        risk = max(risk_score(ml_score, keyword_score, 10, ip_score, complexity), 100.0)
         verdict = "BLOCK"
     else:
-        # Lazy load heavy dependencies only if we did not trigger an early block
-        import pandas as pd
-        import joblib
-
-        # Load trained Random Forest model
-        model = joblib.load(os.path.join(BASE_DIR, "../models/model.pkl"))
-
-        # ── Feature extraction ─────────────────────────────────────────────
-        features = extract_features(query)
-        X        = pd.DataFrame([features])
-
-        # ── ML score: probability the query is malicious (class 1), 0-100 ──
-        ml_score = model.predict_proba(X)[0][1] * 100
-
-        # ── Keyword risk score ─────────────────────────────────────────────
-        keyword_score = min(features["keyword_hits"] * 10, 100)
-
-        # ── IP trust score: 0 if whitelisted, 100 if unknown ──────────────
-        ip_score = 0 if allowed(ip) else 100
-
-        # ── Query complexity score ─────────────────────────────────────────
-        complexity = min(features["multiple_queries"] * 20 + features["joins"] * 10, 100)
-
-        # ── Composite risk score (weighted sum) ────────────────────────────
+        # Benign queries check rate-limiting / query frequency
+        freq = query_frequency(clean_query, user)
         risk = risk_score(ml_score, keyword_score, freq, ip_score, complexity)
 
-        # ── Decision (calibrated thresholds) ──────────────────────────────
-        if risk > 40:
+        # Decision
+        if freq >= 100 or risk > 40:
             verdict = "BLOCK"
         elif risk >= 25:
             verdict = "LOG"

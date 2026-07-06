@@ -27,9 +27,6 @@ PG_MODULE_MAGIC;
 /* Extension enabled state (settable via GUC) */
 static bool ss_enabled = true;
 
-/* Max time in milliseconds to wait for the ML engine (settable via GUC) */
-static int ss_timeout_ms = 3000;
-
 /* Bypass ML checks for superusers (settable via GUC) */
 static bool ss_bypass_superuser = false;
 
@@ -68,18 +65,7 @@ _PG_init(void)
         NULL, NULL, NULL
     );
 
-    DefineCustomIntVariable(
-        "stealthsense.timeout_ms",
-        "Milliseconds to wait for the ML detector before allowing the query.",
-        NULL,
-        &ss_timeout_ms,
-        3000,
-        50,
-        30000,
-        PGC_SUSET,
-        GUC_UNIT_MS,
-        NULL, NULL, NULL
-    );
+
 
     DefineCustomBoolVariable(
         "stealthsense.bypass_superuser",
@@ -91,6 +77,10 @@ _PG_init(void)
         0,
         NULL, NULL, NULL
     );
+
+    /* Clear old frequency history on restart to prevent false positive startup blocks */
+    unlink("/tmp/stealthsense_frequency_history.json");
+    unlink("/tmp/stealthsense_frequency_history.json.lock");
 
     /* Install executor and utility hooks */
     prev_ExecutorStart = ExecutorStart_hook;
@@ -166,9 +156,6 @@ detect_query(const char *query, const char *user, const char *ip)
     pid_t pid;
     char result[32];
     int nbytes;
-    fd_set rfds;
-    struct timeval tv;
-    int sel_ret;
     int child_status;
 
     if (pipe(pipefd) == -1)
@@ -218,26 +205,8 @@ detect_query(const char *query, const char *user, const char *ip)
     /* Parent Process */
     close(pipefd[1]);
 
-    FD_ZERO(&rfds);
-    FD_SET(pipefd[0], &rfds);
-    tv.tv_sec = ss_timeout_ms / 1000;
-    tv.tv_usec = (ss_timeout_ms % 1000) * 1000;
-
-    sel_ret = select(pipefd[0] + 1, &rfds, NULL, NULL, &tv);
-
     memset(result, 0, sizeof(result));
-    nbytes = 0;
-
-    if (sel_ret > 0)
-    {
-        nbytes = (int) read(pipefd[0], result, sizeof(result) - 1);
-    }
-    else
-    {
-        /* Timeout or select error - kill the child and fail-safe */
-        elog(WARNING, "StealthSense: ML detector timed out after %d ms - allowing query", ss_timeout_ms);
-        kill(pid, SIGKILL);
-    }
+    nbytes = (int) read(pipefd[0], result, sizeof(result) - 1);
 
     close(pipefd[0]);
     waitpid(pid, &child_status, 0);
